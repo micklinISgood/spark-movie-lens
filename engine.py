@@ -17,7 +17,26 @@ def get_counts_and_averages(ID_and_ratings_tuple):
 class RecommendationEngine:
     """A movie recommendation engine
     """
-
+    def parseRating(self,line):
+        """
+        Parses a rating record in MovieLens format userId::movieId::rating::timestamp .
+        """
+        fields = line.strip().split(",")
+        return long(fields[3]) % 10, (int(fields[0]), int(fields[1]), float(fields[2]))
+    
+    def loadRatings(self,ratingsFile):
+        """
+        Load ratings from file.
+        """
+      
+        f = open(ratingsFile, 'r')
+        ratings = filter(lambda r: r[2] > 0, [self.parseRating(line)[1] for line in f])
+        f.close()
+        if not ratings:
+            print "No ratings provided."
+            sys.exit(1)
+        else:
+            return ratings
     def __count_and_average_ratings(self):
         """Updates the movies ratings counts from 
         the current data self.ratings_RDD
@@ -72,6 +91,33 @@ class RecommendationEngine:
         ratings = self.__predict_ratings(requested_movies_RDD).collect()
 
         return ratings
+
+    def loadtxt(self):
+
+        myRatings = self.loadRatings("myRating.txt")
+        new_user_ID = myRatings[0][0]
+        print new_user_ID
+        myRatingsRDD = self.sc.parallelize(myRatings)
+        # print myRatings
+        self.ratings_RDD = self.ratings_RDD.union(myRatingsRDD)
+        self.__count_and_average_ratings()
+        # Re-train the ALS model with the new ratings
+        self.__train_model()
+        new_user_ratings_ids = map(lambda x: x[1], myRatings) # get just movie IDs
+        new_user_unrated_movies_RDD = (self.movies_RDD.filter(lambda x: x[0] not in new_user_ratings_ids).map(lambda x: (new_user_ID, x[0])))
+        new_user_recommendations_RDD = self.model.predictAll(new_user_unrated_movies_RDD)
+        new_user_recommendations_rating_RDD = new_user_recommendations_RDD.map(lambda x: (x.product, x.rating))
+        new_user_recommendations_rating_title_and_count_RDD = \
+        new_user_recommendations_rating_RDD.join(self.movies_titles_RDD).join(self.movies_genres).join(self.movies_rating_counts_RDD)
+        print new_user_recommendations_rating_title_and_count_RDD.take(3)
+        new_user_recommendations_rating_title_and_count_RDD = \
+        new_user_recommendations_rating_title_and_count_RDD.map(lambda r: (r[1][0][0][1], r[1][0][0][0], r[1][0][1], r[1][1]))
+        top_movies = new_user_recommendations_rating_title_and_count_RDD.filter(lambda r: r[2]>=25).takeOrdered(25, key=lambda x: -x[1])
+
+        print ('TOP recommended movies (with more than 25 reviews):\n%s' %
+            '\n'.join(map(str, top_movies)))
+        return map(str, top_movies)
+
     
     def get_top_ratings(self, user_id, movies_count):
         """Recommends up to movies_count top unrated movies to user_id
@@ -95,18 +141,21 @@ class RecommendationEngine:
         # Load ratings data for later use
         logger.info("Loading Ratings data...")
         ratings_file_path = os.path.join(dataset_path, 'ratings.csv')
-        ratings_raw_RDD = self.sc.textFile(ratings_file_path)
+        ratings_raw_RDD = self.sc.textFile('ratings.csv')
         ratings_raw_data_header = ratings_raw_RDD.take(1)[0]
         self.ratings_RDD = ratings_raw_RDD.filter(lambda line: line!=ratings_raw_data_header)\
             .map(lambda line: line.split(",")).map(lambda tokens: (int(tokens[0]),int(tokens[1]),float(tokens[2]))).cache()
         # Load movies data for later use
         logger.info("Loading Movies data...")
         movies_file_path = os.path.join(dataset_path, 'movies.csv')
-        movies_raw_RDD = self.sc.textFile(movies_file_path)
+        movies_raw_RDD = self.sc.textFile('movies.csv')
         movies_raw_data_header = movies_raw_RDD.take(1)[0]
+        print movies_raw_RDD.take(1)
         self.movies_RDD = movies_raw_RDD.filter(lambda line: line!=movies_raw_data_header)\
             .map(lambda line: line.split(",")).map(lambda tokens: (int(tokens[0]),tokens[1],tokens[2])).cache()
-        self.movies_titles_RDD = self.movies_RDD.map(lambda x: (int(x[0]),x[1])).cache()
+        print self.movies_RDD.take(3)
+        self.movies_titles_RDD = self.movies_RDD.map(lambda x: (int(x[0]),x[1]))
+        self.movies_genres = self.movies_RDD.map(lambda x: (int(x[0]),x[2]))
         # Pre-calculate movies ratings counts
         self.__count_and_average_ratings()
 

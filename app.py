@@ -22,7 +22,12 @@ def movie_ratings(user_id, movie_id):
     ratings = recommendation_engine.get_ratings_for_movie_ids(user_id, [movie_id])
     return json.dumps(ratings)
  
- 
+@main.route("/load", methods=["GET"])
+def movie_load():
+  
+    rec_list = recommendation_engine.loadtxt()
+    return json.dumps(rec_list)
+
 @main.route("/<int:user_id>/ratings", methods = ["POST"])
 def add_ratings(user_id):
     # get the ratings from the Flask POST request object
